@@ -52,16 +52,8 @@ jobs:
       - name: Package threatexchange
         run: |
           python vpdq-release.py -r
-      - name: Publish distribution to Test PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          username: appleappleapplenanner
-          password: ${{ secrets.test_pypi_password }}
-          repository_url: https://test.pypi.org/legacy/
-          packages_dir: vpdq/dist
       - name: Publish distribution to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
-          username: appleappleapplenanner
           password: ${{ secrets.pypi_password }}
           packages_dir: vpdq/dist
