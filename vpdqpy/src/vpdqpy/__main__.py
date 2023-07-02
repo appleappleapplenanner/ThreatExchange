@@ -5,6 +5,8 @@ import subprocess
 import json
 
 from pdqhashing.hasher.pdq_hasher import PDQHasher
+from pdqhashing.types.hash256 import Hash256
+from pdqhashing.types.containers import HashAndQuality
 
 import typer
 from rich import print as rprint
@@ -20,17 +22,9 @@ import io
 from tqdm import tqdm
 
 @dataclass(slots=True)
-class vpdqFeature:
-    hash256: PDQHasher
+class VpdqFeature:
+    pdqFrame: HashAndQuality
     frameNumber: int
-    quality: int
-    timeStamp: float # This is frameNumber / framesPerSec
-
-@dataclass(slots=True)
-class PDQFrame:
-    pdqHash: str
-    frameNumber: int
-    quality: int
     timeStamp: float # This is frameNumber / framesPerSec
 
 def get_vid_info(file: bytes) -> dict:
@@ -70,14 +64,39 @@ def get_video_bytes(video_file: Path | str | bytes) -> bytes:
 
     return video
 
+# quality tolerance from [0,100]
+def filter_features(vpdq_features: list[VpdqFeature], quality_tolerance: float) -> list[VpdqFeature]:
+    return [feature for feature in vpdq_features if feature.pdqFrame.quality >= quality_tolerance]
+
+def match_count(query_features: list[VpdqFeature], target_features: list[VpdqFeature], distance_tolerance: float) -> int:
+    count = 0
+    for query_feature in query_features:
+        for target_feature in target_features:
+            print("Distance:", query_feature.pdqFrame.hash.hammingDistance(target_feature.pdqFrame.hash))
+            if query_feature.pdqFrame.hash.hammingDistance(target_feature.pdqFrame.hash) <= distance_tolerance:
+                count+=1
+    return count
+
+def match_hash(query_features: list[VpdqFeature], target_features: list[VpdqFeature],
+               quality_tolerance: float = 80, distance_tolerance: float = 10):
+    query_filtered = filter_features(query_features, quality_tolerance)
+    target_filtered = filter_features(target_features, quality_tolerance)
+
+    # Avoid divide by zero
+    if len(query_filtered) <= 0:
+        return 0
+
+    result = match_count(query_filtered, target_filtered, distance_tolerance)
+    return result * 100 / len(query_filtered)
+
 # Perceptually hash video from a file path or the bytes
-def phash_video(video_file: Path | str | bytes) -> list[PDQFrame]:
+def computeHash(video_file: Path | str | bytes) -> list[VpdqFeature]:
     video = get_video_bytes(video_file)
     if video is None:
         return
-    
+
     video_info = get_vid_info(video)
-    print(video_info)
+    #print(video_info)
     width = int(video_info['width'])
     height = int(video_info['height'])        
     framerate = float(eval('+'.join(video_info['avg_frame_rate'].split())))
@@ -92,18 +111,17 @@ def phash_video(video_file: Path | str | bytes) -> list[PDQFrame]:
             .output('pipe:', format='rawvideo', pix_fmt='rgb24', r=interval)
             .run(input=video, capture_stdout=True)
         )
-    
+ 
 
     video_frames = np.frombuffer(out, np.uint8).reshape([-1, height, width, 3])
 
     pdq = PDQHasher()
-    pdqHashes: list[PDQFrame] = []
+    pdqHashes: list[VpdqFeature] = []
     for frameNum, frame in enumerate(tqdm(video_frames)):
         image = Image.fromarray(frame)
         pdqHashAndQuality = pdq.fromBufferedImage(image)
         timestamp = 10 * (frameNum) / (duration * interval) # in seconds
-        pdqFrame = PDQFrame(pdqHashAndQuality.hash, frameNum,
-                            pdqHashAndQuality.quality, timestamp)
+        pdqFrame = VpdqFeature(pdqHashAndQuality, frameNum, timestamp)
         pdqHashes.append(pdqFrame)
 
     return pdqHashes
@@ -112,11 +130,19 @@ def main():
     
     testdir = Path(__file__).parent.parent.parent / "tests/vids"
     testvid1 = testdir / "Big_Buck_Bunny_720_10s_1MB.mp4"
+    testvid2 = testdir / "Big_Buck_Bunny_1080_10s_1MB.mp4"
+    testvid3 = testdir / "test3.mp4"
+    testvids = [testvid1, testvid2, testvid3]
+    testvidbytes = []
     # Read the file into bytes
-    with open(testvid1, 'rb') as file:
-        video_bytes = file.read()
-
-    print(phash_video(video_bytes))
+    for vid in testvids:
+        with open(vid, 'rb') as file:
+            video_bytes = file.read()
+        testvidbytes.append(video_bytes)
+    
+    testvidphash = [computeHash(testvidbyte) for testvidbyte in testvidbytes]
+    
+    print("Match Hash:", match_hash(testvidphash[0], testvidphash[0]))
 
     typer.Exit()
 
