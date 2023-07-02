@@ -15,6 +15,7 @@ import ffmpeg
 import numpy as np
 from PIL import Image
 import io
+from tqdm import tqdm
 
 @dataclass(slots=True)
 class vpdqFeature:
@@ -28,6 +29,7 @@ class PDQFrame:
     pdqHash: str
     frameNumber: int
     quality: int
+    timeStamp: float # This is frameNumber / framesPerSec
 
 
 class PDQFrameBufferHasher:
@@ -111,13 +113,12 @@ def main():
     print(testpic_pdq.getHash())
 
 
-    # Example usage:
-    interval = 1  # Extract a frame every 10 seconds
+    interval = 1/1 # How often to get a frame in seconds / frame
 
     out, _= (
             ffmpeg
             .input(testvid1)
-            .output('pipe:', format='rawvideo', pix_fmt='rgb24', r=1)
+            .output('pipe:', format='rawvideo', pix_fmt='rgb24', r=interval)
             .run(capture_stdout=True)
         )
     
@@ -129,16 +130,20 @@ def main():
     framerate = float(eval('+'.join(video_info['avg_frame_rate'].split())))
     duration = float(video_info['duration'])
     print(f"{framerate} FPS, {duration} seconds")
+
     video = np.frombuffer(out, np.uint8).reshape([-1, height, width, 3])
 
-    print(len(video))
-    for i, frame in enumerate(video):
+    pdqHashes = []
+    for frameNum, frame in enumerate(tqdm(video)):
         image = Image.fromarray(frame)
-        print(pdq.fromBufferedImage(image).hash)
-        timestamp = (i / duration) * framerate
-        print(timestamp)
-        #image.save(f"frame{i}.jpg", format="JPEG")
+        pdqHashAndQuality = pdq.fromBufferedImage(image)
+        timestamp = 10 * (frameNum) / (duration * interval) # in seconds
+        pdqFrame = PDQFrame(pdqHashAndQuality.hash, frameNum,
+                            pdqHashAndQuality.quality, timestamp)
+        pdqHashes.append(pdqFrame)
+    print(pdqHashes)
 
+        
 
     #image.save("frame.jpg", format="JPEG")
     typer.Exit()

@@ -30,6 +30,7 @@ dependencies = [
   "typer",
   "ffmpeg-python",
   "numpy",
+  "tqdm",
 ]
 
 [project.urls]
