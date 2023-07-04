@@ -133,7 +133,7 @@ def computeHash(video_file: Path | str | bytes) -> list[VpdqFeature]:
     # print(video_info)
     width = int(video_info["width"])
     height = int(video_info["height"])
-    framerate = float(eval("+".join(video_info["avg_frame_rate"].split())))
+    framerate = float(eval("+".join(video_info["r_frame_rate"].split())))
     duration = float(video_info["duration"])
     print(f"{framerate} FPS, {duration} seconds")
 
