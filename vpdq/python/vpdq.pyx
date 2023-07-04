@@ -1,9 +1,9 @@
 # distutils: language = c++
 # cython: language_level=3
 # Copyright (c) Meta Platforms, Inc. and affiliates.
-import cv2
 import typing as t
 import subprocess
+import json
 
 from pathlib import Path
 from dataclasses import dataclass
@@ -106,6 +106,24 @@ def hamming_distance(hash1: "Hash256", hash2: "Hash256") -> int:
     """
     return hammingDistance(hash1, hash2)
 
+def get_vid_info(file_path: str) -> dict:
+    ffprobe_process = subprocess.Popen(
+        ['ffprobe', '-show_streams', '-print_format', 'json', '-i', file_path],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE
+    )
+
+    # Retrieve the output and error streams from ffprobe
+    stdout, stderr = ffprobe_process.communicate()
+
+    # Decode the output stream as json
+    output = json.loads(stdout.decode('utf-8'))
+    error = stderr.decode('utf-8')
+
+    video_info = next((stream for stream in output['streams'] if stream['codec_type'] == 'video'), None)
+    if not video_info:
+        raise ValueError("No video stream found in the input file.")
+    return video_info
 
 def computeHash(
     input_video_filename: t.Union[str, Path],
@@ -137,13 +155,16 @@ def computeHash(
     if downsample_height < 0:
         raise ValueError("Downsample_height must be non-negative")
     cdef vector[vpdqFeature] vpdq_hash;
-    vid = cv2.VideoCapture(str_path)
-    frames_per_sec = vid.get(cv2.CAP_PROP_FPS)
+
+    video_info = get_vid_info(str_path)
+
+    frames_per_sec = float(eval('+'.join(video_info['avg_frame_rate'].split())))
+    
     if downsample_width == 0:
-        downsample_width = vid.get(cv2.CAP_PROP_FRAME_WIDTH)
+        downsample_width = int(video_info['width'])
 
     if downsample_height == 0:
-        downsample_height = vid.get(cv2.CAP_PROP_FRAME_HEIGHT)
+        downsample_height = int(video_info['height'])        
 
     rt = hashVideoFile(
         str_path.encode("utf-8"),
