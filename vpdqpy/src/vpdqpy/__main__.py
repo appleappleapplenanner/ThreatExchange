@@ -24,7 +24,8 @@ from tqdm import tqdm
 
 @dataclass(slots=True)
 class VpdqFeature:
-    pdqFrame: HashAndQuality
+    pdqHash: Hash256 # 64 char hex string
+    quality: float # 0 to 100
     frameNumber: int
     timeStamp: float  # This is frameNumber / framesPerSec
 
@@ -70,6 +71,15 @@ def get_video_bytes(video_file: Path | str | bytes) -> bytes:
 
     return video
 
+# Filter out the VPDQ feature with exact same hash
+def dedupe_features(features: list[VpdqFeature]) -> list[VpdqFeature]:
+    unique_features = set()
+    ret = []
+    for feature in features:
+        if str(feature.pdqHash) not in unique_features:
+            ret.append(feature)
+            unique_features.add(str(feature.pdqHash))
+    return ret
 
 # quality tolerance from [0,100]
 def filter_features(
@@ -78,48 +88,38 @@ def filter_features(
     return [
         feature
         for feature in vpdq_features
-        if feature.pdqFrame.quality >= quality_tolerance
+        if feature.quality >= quality_tolerance
     ]
 
-
-def match_count(
+# Get number of matching features for query and target
+def feature_match_count(
     query_features: list[VpdqFeature],
     target_features: list[VpdqFeature],
     distance_tolerance: float,
 ) -> int:
-    count = 0
-    for query_feature in query_features:
-        for target_feature in target_features:
-            print(
-                "Distance:",
-                query_feature.pdqFrame.hash.hammingDistance(
-                    target_feature.pdqFrame.hash
-                ),
-            )
-            if (
-                query_feature.pdqFrame.hash.hammingDistance(
-                    target_feature.pdqFrame.hash
-                )
-                <= distance_tolerance
-            ):
-                count += 1
-    return count
+    return sum(
+        any(
+            query_feature.pdqHash.hammingDistance( target_feature.pdqHash ) <= distance_tolerance
+            for target_feature in target_features
+        )
+        for query_feature in query_features
+    )
 
 
 def match_hash(
     query_features: list[VpdqFeature],
     target_features: list[VpdqFeature],
     quality_tolerance: float = 50,
-    distance_tolerance: float = 30,
+    distance_tolerance: float = 31,
 ):
-    query_filtered = filter_features(query_features, quality_tolerance)
-    target_filtered = filter_features(target_features, quality_tolerance)
+    query_filtered = filter_features(dedupe_features(query_features), quality_tolerance)
+    target_filtered = filter_features(dedupe_features(target_features), quality_tolerance)
 
     # Avoid divide by zero
-    if len(query_filtered) <= 0:
+    if len(query_filtered) <= 0 or len(target_filtered) <= 0:
         return 0
 
-    result = match_count(query_filtered, target_filtered, distance_tolerance)
+    result = feature_match_count(query_filtered, target_filtered, distance_tolerance)
     return result * 100 / len(query_filtered)
 
 
@@ -148,16 +148,15 @@ def computeHash(video_file: Path | str | bytes) -> list[VpdqFeature]:
     video_frames = np.frombuffer(out, np.uint8).reshape([-1, height, width, 3])
 
     pdq = PDQHasher()
-    pdqHashes: list[VpdqFeature] = []
+    features: list[VpdqFeature] = []
     for frameNum, frame in enumerate(tqdm(video_frames)):
         image = Image.fromarray(frame)
         pdqHashAndQuality = pdq.fromBufferedImage(image)
         timestamp = 10 * (frameNum) / (duration * interval)  # in seconds
-        pdqFrame = VpdqFeature(pdqHashAndQuality, frameNum, timestamp)
-        pdqHashes.append(pdqFrame)
+        pdqFrame = VpdqFeature(pdqHashAndQuality.getHash(), pdqHashAndQuality.getQuality(), frameNum, timestamp) 
+        features.append(pdqFrame)
 
-    return pdqHashes
-
+    return features
 
 def main():
     testdir = Path(__file__).parent.parent.parent / "tests/videos"
@@ -166,6 +165,8 @@ def main():
         "Big_Buck_Bunny_1080_10s_1MB.mp4",
         "Jellyfish_360_10s_1MB.mp4",
         "Jellyfish_1080_10s_1MB.mp4",
+        "Sintel_360_10s_1MB.mp4",
+        "Sintel_1080_10s_1MB.mp4",
     ]
     testvids = [testdir / testvid for testvid in testvids]
     testvidbytes = []
@@ -177,7 +178,11 @@ def main():
 
     testvidphash = [computeHash(testvidbyte) for testvidbyte in testvidbytes]
 
-    print("Match:", match_hash(testvidphash[0], testvidphash[1]))
+    for i in range(0, len(testvidphash)):
+        if i + 1 < len(testvidphash):
+            print(
+                f"Match: {i}, {i+1}", match_hash(testvidphash[i], testvidphash[i + 1])
+            )
 
     typer.Exit()
 
