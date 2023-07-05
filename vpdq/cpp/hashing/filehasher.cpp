@@ -100,8 +100,16 @@ bool hashVideoFile(
         pclose(inputFp);
         return false;
       }
+
+      double timestamp = 0;
+      if(framesPerSec <= 0) {
+        timestamp = fno;
+      } else {
+        timestamp = fno / framesPerSec;
+      }
+
       // Push to pdqHashes vector
-      pdqHashes.push_back({pdqHash, fno, quality, (double)fno / framesPerSec});
+      pdqHashes.push_back({pdqHash, fno, quality, timestamp});
       if (verbose) {
         printf("PDQHash: %s \n", pdqHash.format().c_str());
       }

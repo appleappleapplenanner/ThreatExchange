@@ -158,7 +158,7 @@ def computeHash(
 
     video_info = get_vid_info(str_path)
 
-    frames_per_sec = float(eval('+'.join(video_info['avg_frame_rate'].split())))
+    frames_per_sec = float(eval('+'.join(video_info['r_frame_rate'].split())))
     
     if downsample_width == 0:
         downsample_width = int(video_info['width'])
