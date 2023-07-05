@@ -23,15 +23,15 @@ from tqdm import tqdm, trange
 
 @dataclass(slots=True)
 class VpdqFeature:
-    pdqHash: Hash256 # 64 char hex string
-    quality: float # 0 to 100
+    pdqHash: Hash256  # 64 char hex string
+    quality: float  # 0 to 100
     frameNumber: int
 
 
 def get_vid_info(file: bytes) -> dict:
     # ffprobe command to get info. ffmpeg-python requires a file name, this does not.
     ffprobe_process = subprocess.Popen(
-        ["ffprobe", "-show_streams", "-print_format", "json", "-"],
+        ["ffprobe", "-show_streams", "-select_streams", "v:0", "-print_format", "json", "-", "-sexagesimal"],
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -48,6 +48,7 @@ def get_vid_info(file: bytes) -> dict:
         (stream for stream in output["streams"] if stream["codec_type"] == "video"),
         None,
     )
+
     if not video_info:
         raise ValueError("No video stream found in the input file.")
     return video_info
@@ -69,6 +70,7 @@ def get_video_bytes(video_file: Path | str | bytes) -> bytes:
 
     return video
 
+
 # Filter out the VPDQ feature with exact same hash
 def dedupe_features(features: list[VpdqFeature]) -> list[VpdqFeature]:
     unique_features = set()
@@ -79,15 +81,11 @@ def dedupe_features(features: list[VpdqFeature]) -> list[VpdqFeature]:
             unique_features.add(str(feature.pdqHash))
     return ret
 
+
 # quality tolerance from [0,100]
-def filter_features(
-    vpdq_features: list[VpdqFeature], quality_tolerance: float
-) -> list[VpdqFeature]:
-    return [
-        feature
-        for feature in vpdq_features
-        if feature.quality >= quality_tolerance
-    ]
+def filter_features(vpdq_features: list[VpdqFeature], quality_tolerance: float) -> list[VpdqFeature]:
+    return [feature for feature in vpdq_features if feature.quality >= quality_tolerance]
+
 
 # Get number of matching features for query and target
 def feature_match_count(
@@ -97,7 +95,7 @@ def feature_match_count(
 ) -> int:
     return sum(
         any(
-            query_feature.pdqHash.hammingDistance( target_feature.pdqHash ) <= distance_tolerance
+            query_feature.pdqHash.hammingDistance(target_feature.pdqHash) <= distance_tolerance
             for target_feature in target_features
         )
         for query_feature in query_features
@@ -110,8 +108,8 @@ def match_hash(
     quality_tolerance: float = 50,
     distance_tolerance: float = 31,
 ):
-    query_filtered = filter_features(dedupe_features(query_features), quality_tolerance)
-    target_filtered = filter_features(dedupe_features(target_features), quality_tolerance)
+    query_filtered = filter_features(query_features, quality_tolerance)
+    target_filtered = filter_features(target_features, quality_tolerance)
 
     # Avoid divide by zero
     if len(query_filtered) <= 0 or len(target_filtered) <= 0:
@@ -122,50 +120,61 @@ def match_hash(
 
 
 # Perceptually hash video from a file path or the bytes
-def computeHash(video_file: Path | str | bytes) -> list[VpdqFeature]:
+def computeHash(video_file: Path | str | bytes, seconds_per_hash: float = 1) -> list[VpdqFeature]:
     video = get_video_bytes(video_file)
     if video is None:
         return
 
     video_info = get_vid_info(video)
-    # print(video_info)
     width = int(video_info["width"])
     height = int(video_info["height"])
-    #framerate = float(eval("+".join(video_info["r_frame_rate"].split())))
-    duration = float(video_info["duration"])
-    #print(f"{framerate} FPS, {duration} seconds")
-
-    interval = 1 / 1  # How often to get a frame in seconds / frame
 
     pdq = PDQHasher()
     features: list[VpdqFeature] = []
-    for second in trange(0, int(duration), int(interval)):
+
+    second = 0
+    while True:
         out, _ = (
             ffmpeg.input("pipe:")
-            .output("pipe:", loglevel="quiet", format="rawvideo", pix_fmt="rgb24", vsync=1, avoid_negative_ts=1, ss=f"{second}", map="0:v", frames=1)
+            .output(
+                "pipe:",
+                loglevel="error",
+                format="rawvideo",
+                pix_fmt="rgb24",
+                avoid_negative_ts=1,
+                ss=f"{second}", # Seek second
+                map="0:v", # Get only first video stream
+                frames=1, # Extract frame
+            )
             .run(input=video, capture_stdout=True)
         )
 
+        # Create image or if end of video is reached then return
+        try:
+            image = Image.frombytes("RGB", tuple([width, height]), out)
+        except ValueError as exc:
+            if str(exc) != "not enough image data":
+                raise ValueError from exc
+            else:
+                break
 
-        #frame = np.frombuffer(out, np.uint8).reshape([-1, height, width, 3])[0]
-        #frame = frame[0]
-        #image = Image.fromarray(frame)
-        image = Image.frombytes("RGB", tuple([width, height]), out)
-        #image.save(f"test{second}.jpg")
+        pdq_hash_and_quality = pdq.fromBufferedImage(image)
+        pdq_frame = VpdqFeature(pdq_hash_and_quality.getHash(), pdq_hash_and_quality.getQuality(), second)
+        features.append(pdq_frame)
+        second+=seconds_per_hash
 
-        # TODO: Shouldn't just the deduped features be returned if we're going to dedupe them later anyway?
-        pdqHashAndQuality = pdq.fromBufferedImage(image)
-        pdqFrame = VpdqFeature(pdqHashAndQuality.getHash(), pdqHashAndQuality.getQuality(), second) 
-        features.append(pdqFrame)
+    return dedupe_features(features)
 
-    print(features)
-    return features
+# Check if video is similar by comparing featurelists
+def video_is_similar(vpdq_features1: list[VpdqFeature], vpdq_features2: list[VpdqFeature], threshold: float = 50):
+    return match_hash(query_features=vpdq_features1, target_features=vpdq_features2) >= threshold
 
 def main():
     testdir = Path(__file__).parent.parent.parent / "tests/videos"
     testvids = [
         "Big_Buck_Bunny_720_10s_1MB.mp4",
         "Big_Buck_Bunny_1080_10s_1MB.mp4",
+        "Big_Buck_Bunny_1080_10s_1MB-H265.mp4",
         "Jellyfish_360_10s_1MB.mp4",
         "Jellyfish_1080_10s_1MB.mp4",
         "Sintel_360_10s_1MB.mp4",
@@ -181,11 +190,9 @@ def main():
 
     testvidphash = [computeHash(testvidbyte) for testvidbyte in testvidbytes]
 
-    for i in range(0, len(testvidphash)):
-        if i + 1 < len(testvidphash):
-            print(
-                f"Match:", match_hash(testvidphash[i], testvidphash[i + 1])
-            )
+    for i in range(0, len(testvidphash)-1):
+        print("Match:", video_is_similar(testvidphash[i], testvidphash[i+1]))
+        #print(f"Match:", match_hash(testvidphash[i], testvidphash[i + 1]))
 
     typer.Exit()
 
