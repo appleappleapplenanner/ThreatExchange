@@ -102,7 +102,7 @@ bool hashVideoFile(
       }
 
       double timestamp = 0;
-      if(framesPerSec <= 0) {
+      if (framesPerSec <= 0) {
         timestamp = fno;
       } else {
         timestamp = fno / framesPerSec;
