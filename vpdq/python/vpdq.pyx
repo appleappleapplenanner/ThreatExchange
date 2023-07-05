@@ -117,8 +117,8 @@ def get_vid_info(file_path: str) -> dict:
     stdout, stderr = ffprobe_process.communicate()
 
     # Decode the output stream as json
-    output = json.loads(stdout.decode('utf-8'))
-    error = stderr.decode('utf-8')
+    output = json.loads(stdout.decode('utf-8', errors='replace'))
+    # error = stderr.decode('utf-8', errors='replace')
 
     video_info = next((stream for stream in output['streams'] if stream['codec_type'] == 'video'), None)
     if not video_info:
