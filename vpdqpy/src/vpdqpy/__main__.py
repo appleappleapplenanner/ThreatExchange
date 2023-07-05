@@ -142,7 +142,7 @@ def computeHash(video_file: Path | str | bytes) -> list[VpdqFeature]:
     for second in trange(0, int(duration), int(interval)):
         out, _ = (
             ffmpeg.input("pipe:")
-            .output("pipe:", loglevel="quiet", format="rawvideo", pix_fmt="rgb24", avoid_negative_ts=1, ss=f"{second}", map="0:v")
+            .output("pipe:", loglevel="quiet", format="rawvideo", pix_fmt="rgb24", vsync=1, avoid_negative_ts=1, ss=f"{second}", map="0:v", frames=1)
             .run(input=video, capture_stdout=True)
         )
 
