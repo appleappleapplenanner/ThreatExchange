@@ -25,12 +25,8 @@ classifiers = [
   "Programming Language :: Python :: Implementation :: PyPy",
 ]
 dependencies = [
-  "Image",
-  "pillow",
-  "typer",
+  "Pillow",
   "ffmpeg-python",
-  "numpy",
-  "tqdm",
 ]
 
 [project.urls]

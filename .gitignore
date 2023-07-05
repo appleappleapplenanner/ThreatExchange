@@ -21,3 +21,6 @@ pdq/java/bazel-testlogs/
 .idea/
 venv/
 .venv/
+*.o
+*.so
+vpdq.cpp
