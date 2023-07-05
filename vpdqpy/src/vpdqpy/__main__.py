@@ -1,4 +1,3 @@
-import logging
 from typing import Optional, Annotated, List
 from pathlib import Path
 import subprocess
@@ -19,7 +18,7 @@ import ffmpeg
 import numpy as np
 from PIL import Image
 import io
-from tqdm import tqdm
+from tqdm import tqdm, trange
 
 
 @dataclass(slots=True)
@@ -27,7 +26,6 @@ class VpdqFeature:
     pdqHash: Hash256 # 64 char hex string
     quality: float # 0 to 100
     frameNumber: int
-    timeStamp: float  # This is frameNumber / framesPerSec
 
 
 def get_vid_info(file: bytes) -> dict:
@@ -133,29 +131,34 @@ def computeHash(video_file: Path | str | bytes) -> list[VpdqFeature]:
     # print(video_info)
     width = int(video_info["width"])
     height = int(video_info["height"])
-    framerate = float(eval("+".join(video_info["r_frame_rate"].split())))
+    #framerate = float(eval("+".join(video_info["r_frame_rate"].split())))
     duration = float(video_info["duration"])
-    print(f"{framerate} FPS, {duration} seconds")
+    #print(f"{framerate} FPS, {duration} seconds")
 
     interval = 1 / 1  # How often to get a frame in seconds / frame
 
-    out, _ = (
-        ffmpeg.input("pipe:")
-        .output("pipe:", format="rawvideo", pix_fmt="rgb24", r=interval)
-        .run(input=video, capture_stdout=True)
-    )
-
-    video_frames = np.frombuffer(out, np.uint8).reshape([-1, height, width, 3])
-
     pdq = PDQHasher()
     features: list[VpdqFeature] = []
-    for frameNum, frame in enumerate(tqdm(video_frames)):
-        image = Image.fromarray(frame)
+    for second in trange(0, int(duration), int(interval)):
+        out, _ = (
+            ffmpeg.input("pipe:")
+            .output("pipe:", loglevel="quiet", format="rawvideo", pix_fmt="rgb24", avoid_negative_ts=1, ss=f"{second}", map="0:v")
+            .run(input=video, capture_stdout=True)
+        )
+
+
+        #frame = np.frombuffer(out, np.uint8).reshape([-1, height, width, 3])[0]
+        #frame = frame[0]
+        #image = Image.fromarray(frame)
+        image = Image.frombytes("RGB", tuple([width, height]), out)
+        #image.save(f"test{second}.jpg")
+
+        # TODO: Shouldn't just the deduped features be returned if we're going to dedupe them later anyway?
         pdqHashAndQuality = pdq.fromBufferedImage(image)
-        timestamp = 10 * (frameNum) / (duration * interval)  # in seconds
-        pdqFrame = VpdqFeature(pdqHashAndQuality.getHash(), pdqHashAndQuality.getQuality(), frameNum, timestamp) 
+        pdqFrame = VpdqFeature(pdqHashAndQuality.getHash(), pdqHashAndQuality.getQuality(), second) 
         features.append(pdqFrame)
 
+    print(features)
     return features
 
 def main():
@@ -181,7 +184,7 @@ def main():
     for i in range(0, len(testvidphash)):
         if i + 1 < len(testvidphash):
             print(
-                f"Match: {i}, {i+1}", match_hash(testvidphash[i], testvidphash[i + 1])
+                f"Match:", match_hash(testvidphash[i], testvidphash[i + 1])
             )
 
     typer.Exit()
